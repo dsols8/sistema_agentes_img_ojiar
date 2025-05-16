@@ -1,0 +1,5 @@
+path: .
+train: input_imagenes
+val: input_imagenes
+names:
+  0: product
