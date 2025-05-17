@@ -1,0 +1,5 @@
+# Ignorar imágenes JPG
+*.jpg
+
+# Ignorar archivos de texto
+input_imagenes/*.txt
