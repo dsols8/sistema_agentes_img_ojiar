@@ -1,38 +1,39 @@
-import os
-from PIL import Image
-import glob
-import openai
-
-# Coloca aquí tu API Key
-openai.api_key = "TU_API_KEY"
-
-
-# Carpeta de entrada
-INPUT_FOLDER = 'input_imagenes/'
-
-def obtener_imagenes(folder):
-    extensiones_validas = ['*.jpg', '*.jpeg', '*.png']
-    imagenes = []
-    for ext in extensiones_validas:
-        imagenes.extend(glob.glob(os.path.join(folder, ext)))
-    return imagenes
+# ============================
+# main.py
+# ============================
+"""
+Mini menú para elegir la fase del pipeline:
+1) Entrenar YOLO
+2) Predecir YOLO
+3) Procesar con GPT-4o Vision
+4) Salir
+Ejecuta desde la raíz:
+  python src/main.py
+"""
+import sys
+from train_yolo import train_yolo
+from src.preditc_yolo import predict_yolo
+from src.process_catalog_LLM import sys as proc_module
 
 def main():
-    imagenes = obtener_imagenes(INPUT_FOLDER)
+    while True:
+        print("\n--- Pipeline de Extracción ---")
+        print("1) Entrenar YOLO")
+        print("2) Predecir con YOLO")
+        print("3) Procesar recortes con GPT-4o Vision")
+        print("4) Salir")
+        choice = input("Selecciona opción [1-4]: ")
+        if choice == "1":
+            train_yolo()
+        elif choice == "2":
+            predict_yolo()
+        elif choice == "3":
+            proc_module
+        elif choice == "4":
+            print("Saliendo...")
+            sys.exit(0)
+        else:
+            print("Opción inválida.")
 
-    if not imagenes:
-        print("No se encontraron imágenes en la carpeta.")
-        return
-
-    print(f"Total de imágenes encontradas: {len(imagenes)}")
-
-    for i, img_path in enumerate(imagenes):
-        print(f"[{i+1}] {os.path.basename(img_path)}")
-
-        # Mostrar la primera imagen como validación
-        if i == 0:
-            img = Image.open(img_path)
-            img.show()
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
