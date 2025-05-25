@@ -1,11 +1,8 @@
-# ============================
-# process_catalog_LLM.py
+# src/process_catalog_llm.py
 # ============================
 """
-Script para procesar los recortes generados por YOLO con GPT-4o Vision,
-extraer JSON (nombre, código, precio) y volcarlo en un Excel.
-Ejecuta:
-  python src/process_catalog_gpt4o.py
+Función para procesar imágenes completas con GPT-4o Vision y generar un Excel
+con todos los productos extraídos.
 """
 import os
 import re
@@ -14,71 +11,101 @@ import base64
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
-from ultralytics import YOLO
 import openpyxl
-import cv2
 
-# Carga clave API
+# Carga la clave de OpenAI desde .env
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Rutas
-ROOT       = Path(__file__).parent.parent
-IMG_DIR    = ROOT / "input_imagenes"
-MODEL_PATH = ROOT / "runs" / "detect" / "producto_v3" / "weights" / "best.pt"
-CROPS_DIR  = ROOT / "runs" / "crops"
+# Define la raíz del proyecto (un nivel arriba de src/)
+ROOT = Path(__file__).resolve().parent.parent
+IMG_DIR = ROOT / "input_imagenes"
 EXCEL_PATH = ROOT / "productos.xlsx"
 
-CROPS_DIR.mkdir(parents=True, exist_ok=True)
-model = YOLO(str(MODEL_PATH))
 
-# Prepara Excel
-wb = openpyxl.Workbook()
-ws = wb.active
-ws.title = "Productos"
-ws.append(["Nombre", "Código", "Precio", "Página", "Archivo", "CropPath"])
+def _extract_json(text: str) -> str:
+    """
+    Extrae el primer bloque JSON array de text, soportando fences ```json ...```
+    o buscando el primer '[' y el último ']' en el contenido.
+    """
+    # fenced code block
+    m = re.search(r"```json\s*(\[.*?\])\s*```", text, re.S)
+    if m:
+        return m.group(1)
+    # plain JSON array
+    start = text.find('[')
+    end = text.rfind(']')
+    if start != -1 and end != -1 and end > start:
+        return text[start:end+1]
+    return ""
 
-# Función helper
-def extract_with_gpt4o(crop_path):
-    b64 = base64.b64encode(crop_path.read_bytes()).decode()
-    messages = [
-        {"role":"system","content":"Eres un asistente multimodal experto en catálogos. Extrae nombre (texto grande), código y precio (solo dígitos)."},
-        {"role":"user","content":[
-            {"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b64}"}},
-            {"type":"text","text":"Devuélveme **solo** un JSON con {\"nombre\":...,\"codigo\":...,\"precio\":...}."}
-        ]}
-    ]
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages
-    )
-    return resp.choices[0].message.content.strip()
 
-# Procesamiento
-for img_file in sorted(IMG_DIR.glob("*.jpg")):
-    page = int(re.findall(r"(\d+)", img_file.stem)[-1]) if re.findall(r"(\d+)", img_file.stem) else None
-    results = model.predict(source=str(img_file), conf=0.2, verbose=False)
-    boxes = results[0].boxes.xyxy.cpu().numpy() or [[0,0,*results[0].orig_shape[:2][::-1]]]
+def process_catalog_llm():
+    """
+    1) Itera sobre cada JPG en input_imagenes
+    2) Llama a GPT-4o Vision para extraer un JSON array de productos
+    3) Genera productos.xlsx con Nombre, Código, Precio, Página y Archivo
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Productos"
+    # Encabezados: Nombre, Código, Precio, Página, Archivo
+    ws.append(["Nombre", "Código", "Precio", "Página", "Archivo"])
 
-    for idx, (x1,y1,x2,y2) in enumerate(boxes):
-        crop = results[0].orig_img[int(y1):int(y2), int(x1):int(x2)]
-        crop_name = f"{img_file.stem}_page{page}_{idx}.jpg"
-        crop_path = CROPS_DIR / crop_name
-        cv2.imwrite(str(crop_path), crop)
-        try:
-            json_str = extract_with_gpt4o(crop_path)
-            data = json.loads(json_str)
-        except:
+    for img_file in sorted(IMG_DIR.glob("*.jpg")):
+        # Número de página extraído del filename
+        nums = re.findall(r"(\d+)", img_file.stem)
+        page = int(nums[-1]) if nums else None
+
+        # Codifica imagen en base64
+        img_b64 = base64.b64encode(img_file.read_bytes()).decode()
+        messages = [
+            {"role": "system", "content": (
+                "Eres un asistente multimodal experto en catálogos de productos. "
+                "Solo debes devolver un JSON array con objetos {\"nombre\",\"codigo\",\"precio\"}, nada más."
+            )},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                {"type": "text", "text": (
+                    "Extrae todos los productos de esta página y devuélvelos solo como un JSON array."
+                )}
+            ]}
+        ]
+
+        # Llamada a la API multimodal
+        resp = client.chat.completions.create(
+            model="gpt-4o", messages=messages, temperature=0.0
+        )
+        raw = resp.choices[0].message.content
+        print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
+
+        # Extrae el bloque JSON
+        jtext = _extract_json(raw)
+        if not jtext:
+            print(f"⚠️ No se encontró JSON válido en {img_file.name}, se omite.")
             continue
-        if all(k in data and data[k] for k in ("nombre","codigo","precio")):
-            ws.append([
-                data["nombre"],
-                data["codigo"],
-                re.sub(r"\D","",data["precio"]),
-                page,
-                img_file.name,
-                str(crop_path.relative_to(ROOT))
-            ])
 
-wb.save(EXCEL_PATH)
-print(f"✅ Excel generado en {EXCEL_PATH} con {ws.max_row-1} productos.")
+        # Parsea JSON
+        try:
+            products = json.loads(jtext)
+        except json.JSONDecodeError:
+            print(f"⚠️ JSON malformado en {img_file.name}, contenido:\n{jtext}")
+            continue
+
+        # Agrega cada producto válido al Excel
+        for prod in products:
+            nombre = prod.get("nombre", "").strip()
+            codigo = re.sub(r"\D", "", str(prod.get("codigo", "")))
+            precio = re.sub(r"\D", "", str(prod.get("precio", "")))
+
+            if not (nombre and codigo and precio):
+                print(f"⚠️ Falta nombre/código/precio en {img_file.name}, se omite.")
+                continue
+
+            ws.append([nombre, codigo, precio, page, img_file.name])
+
+        print(f"✅ Procesados {len(products)} productos en {img_file.name}")
+
+    # Guarda el archivo
+    wb.save(EXCEL_PATH)
+    print(f"\n🎉 Excel generado en {EXCEL_PATH} con {ws.max_row - 1} productos.")

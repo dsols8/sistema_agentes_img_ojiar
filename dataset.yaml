@@ -1,5 +1,0 @@
-path: C:/Users/Usuario 1/Desktop/DarioInfo/OJIAR/sistema_agentes_img_ojiar
-train: input_imagenes
-val: input_imagenes
-names:
-  0: product
