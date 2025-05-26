@@ -1,6 +1,9 @@
-# Ignorar imágenes JPG
+# Ignorar imágenes JPG y PNG
 *.jpg
 *.png
+
+# Ignorar archivos excel
+*.xlsx
 
 # Variables de entorno
 .env

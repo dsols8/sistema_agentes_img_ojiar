@@ -4,13 +4,13 @@
 Función para procesar un catálogo completo con GPT-4o Vision.
 
 La función acepta:
-  - image_dir: Ruta (relative o absolute) de la carpeta con imágenes del catálogo.
+  - image_dir: Ruta de la carpeta con imágenes del catálogo (jpg o png).
   - catalog_name: Nombre para el archivo Excel de salida (sin extensión).
 
 Ejemplo de llamada desde main.py:
     process_catalog_llm("input_imagenes/Estilos", "estilos")
 
-Se genera "estilos.xlsx" en la raíz del proyecto.
+Se genera "excel/estilos.xlsx" en la raíz del proyecto.
 """
 import os
 import re
@@ -45,19 +45,23 @@ def _extract_json(text: str) -> str:
 
 def process_catalog_llm(image_dir: str | Path, catalog_name: str):
     """
-    Procesa todas las imágenes JPG en image_dir con GPT-4o Vision y genera un Excel.
+    Procesa todas las imágenes JPG y PNG en image_dir con GPT-4o Vision y genera un Excel.
 
-    :param image_dir: Carpeta con imágenes del catálogo (relativa a ROOT o absolute).
+    :param image_dir: Carpeta con imágenes del catálogo (jpg/png).
     :param catalog_name: Nombre de archivo Excel de salida (sin ".xlsx").
     """
     # Determina carpeta de imágenes
-    dir_path = Path(image_dir)
-    IMG_DIR = dir_path if dir_path.is_absolute() else ROOT / image_dir
+    IMG_DIR = Path(image_dir)
+    print(f"Procesando imágenes desde: {IMG_DIR}")
+    if not IMG_DIR.is_absolute():
+        IMG_DIR = ROOT / image_dir
     if not IMG_DIR.exists():
-        raise FileNotFoundError(f"Directorios de imágenes no encontrado: {IMG_DIR}")
+        raise FileNotFoundError(f"No existe la ruta de imágenes: {IMG_DIR}")
 
-    # Prepara ruta Excel
-    EXCEL_PATH = ROOT / "excel" / f"{catalog_name}.xlsx"
+    # Prepara carpeta y ruta del Excel
+    EXCEL_DIR = ROOT / "excel"
+    EXCEL_DIR.mkdir(parents=True, exist_ok=True)
+    EXCEL_PATH = EXCEL_DIR / f"{catalog_name}.xlsx"
 
     # Crea libro y hoja
     wb = openpyxl.Workbook()
@@ -65,9 +69,12 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str):
     ws.title = "Productos"
     ws.append(["Nombre", "Código", "Precio", "Página", "Archivo"])
 
-    # Por cada imagen en la carpeta
-    for img_file in sorted(IMG_DIR.glob("*.jpg")):
-        # Extrae número de página por el último grupo de dígitos en el nombre
+    # Obtiene todos los archivos jpg/png
+    image_paths = list(IMG_DIR.glob("*.jpg")) + list(IMG_DIR.glob("*.png"))
+    image_paths.sort()
+
+    for img_file in image_paths:
+        # Extrae número de página del filename (último grupo de dígitos)
         nums = re.findall(r"(\d+)", img_file.stem)
         page = int(nums[-1]) if nums else None
 
@@ -76,31 +83,30 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str):
         messages = [
             {"role": "system", "content": (
                 "Eres un asistente multimodal experto en catálogos. "
-                "Solo devuélveme un JSON array con objetos {\"nombre\",\"codigo\",\"precio\"}, sin nada más."
+                "Devuélveme únicamente un JSON array con objetos {\"nombre\",\"codigo\",\"precio\"}, sin texto adicional."
+                "Si el producto tiene variantes agrega la variante al nombre, "
+                "por ejemplo: \"Nombre Producto - Variante\". "
             )},
             {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/{img_file.suffix[1:]};base64,{img_b64}"}},
                 {"type": "text", "text": (
-                    "Extrae todos los productos de esta página y respóndeme únicamente con el JSON array."
+                    "Extrae todos los productos de esta página. Responde solo con el JSON array."
                 )}
             ]}
         ]
 
         # Llamada GPT-4o Vision
         resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.0
+            model="gpt-4o", messages=messages, temperature=0.0
         )
         raw = resp.choices[0].message.content
         print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
 
-        # Extrae y parsea el JSON
+        # Extrae y parsea el bloque JSON
         jtext = _extract_json(raw)
         if not jtext:
             print(f"⚠️ JSON no encontrado en {img_file.name}, omitiendo.")
             continue
-
         try:
             products = json.loads(jtext)
         except json.JSONDecodeError:
@@ -119,6 +125,6 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str):
 
         print(f"✅ Procesados {len(products)} productos en {img_file.name}")
 
-    # Guarda Excel
+    # Guarda el Excel
     wb.save(EXCEL_PATH)
-    print(f"\n🎉 Excel guardado en {EXCEL_PATH} con {ws.max_row - 1} productos.")
+    print(f"\n🎉 Archivo guardado en {EXCEL_PATH} con {ws.max_row - 1} productos.")
