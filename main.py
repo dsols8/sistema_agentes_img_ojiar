@@ -14,12 +14,30 @@ def main():
     while True:
         print("\n--- Menú Pipeline Catálogos ---")
         print("1) Procesar con GPT-4o Vision")
-        print("1) Entrenar GPT-4o Vision")
+        print("2) Entrenar GPT-4o Vision")
         print("3) Salir")
-        choice = input("Selecciona [1-4]: ")
+        choice = input("Selecciona [1-3]: ")
         if choice == "1":
             # Importar y ejecutar
-            process_catalog_llm()
+            while True:
+                print("\n--- Selecciona un catálogo: ---")
+                print("1) Estilos")
+                print("2) Estilos Ofertas")
+                print("3) Oriflame")
+                print("4) Volver")
+                choice2 = input("Selecciona [1-4]: ")
+                if choice2 == "1":
+                    process_catalog_llm("input_imagenes/Estilos", "estilos")
+                elif choice2 == "2":
+                    process_catalog_llm("input_imagenes/Estilos_Ofertas", "estilos_ofertas")
+                elif choice2 == "3":
+                    process_catalog_llm("input_imagenes/Oriflame", "oriflame")
+                elif choice2 == "4":
+                    print("Volviendo...")
+                    break
+                else:
+                    print("Opción inválida.")
+                    
         elif choice == "2":
             # Entrenar
             print("Entrenando GPT-4o Vision...")
