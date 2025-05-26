@@ -1,5 +1,6 @@
 # Ignorar imágenes JPG
 *.jpg
+*.png
 
 # Variables de entorno
 .env
