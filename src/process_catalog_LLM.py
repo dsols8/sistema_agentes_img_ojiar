@@ -43,7 +43,7 @@ def _extract_json(text: str) -> str:
     return ""
 
 
-def process_catalog_llm(image_dir: str | Path, catalog_name: str):
+def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "gpt-4o"):
     """
     Procesa todas las imágenes JPG y PNG en image_dir con GPT-4o Vision y genera un Excel.
 
@@ -59,7 +59,7 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str):
         raise FileNotFoundError(f"No existe la ruta de imágenes: {IMG_DIR}")
 
     # Prepara carpeta y ruta del Excel
-    EXCEL_DIR = ROOT / "excel"
+    EXCEL_DIR = ROOT / "excel" / catalog_name
     EXCEL_DIR.mkdir(parents=True, exist_ok=True)
     EXCEL_PATH = EXCEL_DIR / f"{catalog_name}.xlsx"
 
@@ -97,7 +97,7 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str):
 
         # Llamada GPT-4o Vision
         resp = client.chat.completions.create(
-            model="gpt-4o", messages=messages, temperature=0.0
+            model, messages=messages, temperature=0.0
         )
         raw = resp.choices[0].message.content
         print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
