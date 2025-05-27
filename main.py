@@ -22,18 +22,25 @@ def main():
             # Importar y ejecutar
             while True:
                 print("\n--- Selecciona un catálogo: ---")
-                print("1) Estilos")
-                print("2) Estilos Ofertas")
-                print("3) Oriflame")
-                print("4) Volver")
+
+                print("1) Todos los catálogos")
+                print("2) Estilos")
+                print("3) Estilos Ofertas")
+                print("4) Oriflame")
+                print("5) Volver")
                 choice2 = input("Selecciona [1-4]: ")
                 if choice2 == "1":
                     process_catalog_llm("input_imagenes/Estilos", "estilos")
-                elif choice2 == "2":
                     process_catalog_llm("input_imagenes/Estilos_Ofertas", "estilos_ofertas")
-                elif choice2 == "3":
                     process_catalog_llm("input_imagenes/Oriflame", "oriflame")
+
+                elif choice2 == "2":
+                    process_catalog_llm("input_imagenes/Estilos", "estilos")
+                elif choice2 == "3":
+                    process_catalog_llm("input_imagenes/Estilos_Ofertas", "estilos_ofertas")
                 elif choice2 == "4":
+                    process_catalog_llm("input_imagenes/Oriflame", "oriflame")
+                elif choice2 == "5":
                     print("Volviendo...")
                     break
                 else:

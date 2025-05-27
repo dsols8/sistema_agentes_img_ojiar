@@ -52,7 +52,6 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
     """
     # Determina carpeta de imágenes
     IMG_DIR = Path(image_dir)
-    print(f"Procesando imágenes desde: {IMG_DIR}")
     if not IMG_DIR.is_absolute():
         IMG_DIR = ROOT / image_dir
     if not IMG_DIR.exists():
@@ -60,6 +59,7 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
 
     # Prepara carpeta y ruta del Excel
     EXCEL_DIR = ROOT / "excel" / catalog_name
+    print(f"Guardando Excel en: {EXCEL_DIR}")
     EXCEL_DIR.mkdir(parents=True, exist_ok=True)
     EXCEL_PATH = EXCEL_DIR / f"{catalog_name}.xlsx"
 
@@ -97,7 +97,7 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
 
         # Llamada GPT-4o Vision
         resp = client.chat.completions.create(
-            model, messages=messages, temperature=0.0
+            model=model, messages=messages, temperature=0.0
         )
         raw = resp.choices[0].message.content
         print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
