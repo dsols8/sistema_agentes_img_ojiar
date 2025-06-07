@@ -58,7 +58,7 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
         raise FileNotFoundError(f"No existe la ruta de imágenes: {IMG_DIR}")
 
     # Prepara carpeta y ruta del Excel
-    EXCEL_DIR = ROOT / "excel" / catalog_name
+    EXCEL_DIR = ROOT / "excel"
     print(f"Guardando Excel en: {EXCEL_DIR}")
     EXCEL_DIR.mkdir(parents=True, exist_ok=True)
     EXCEL_PATH = EXCEL_DIR / f"{catalog_name}.xlsx"
@@ -95,35 +95,38 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
             ]}
         ]
 
-        # Llamada GPT-4o Vision
-        resp = client.chat.completions.create(
-            model=model, messages=messages, temperature=0.0
-        )
-        raw = resp.choices[0].message.content
-        print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
-
-        # Extrae y parsea el bloque JSON
-        jtext = _extract_json(raw)
-        if not jtext:
-            print(f"⚠️ JSON no encontrado en {img_file.name}, omitiendo.")
-            continue
         try:
-            products = json.loads(jtext)
-        except json.JSONDecodeError:
-            print(f"⚠️ JSON malformado en {img_file.name}, contenido:\n{jtext}")
-            continue
+            # Llamada GPT-4o Vision
+            resp = client.chat.completions.create(
+                model=model, messages=messages, temperature=0.0
+            )
+            raw = resp.choices[0].message.content
+            print(f"\n--- RAW GPT RESPONSE for {img_file.name} ---\n{raw}\n---------------------------")
 
-        # Volcar cada producto
-        for prod in products:
-            nombre = prod.get("nombre", "").strip()
-            codigo = re.sub(r"\D", "", str(prod.get("codigo", "")))
-            precio = re.sub(r"\D", "", str(prod.get("precio", "")))
-            if not (nombre and codigo and precio):
-                print(f"⚠️ Campos faltantes en {img_file.name}, omitiendo entrada.")
+            # Extrae y parsea el bloque JSON
+            jtext = _extract_json(raw)
+            if not jtext:
+                print(f"⚠️ JSON no encontrado en {img_file.name}, omitiendo.")
                 continue
-            ws.append([nombre, codigo, precio, page, img_file.name])
+            try:
+                products = json.loads(jtext)
+            except json.JSONDecodeError:
+                print(f"⚠️ JSON malformado en {img_file.name}, contenido:\n{jtext}")
+                continue
 
-        print(f"✅ Procesados {len(products)} productos en {img_file.name}")
+            # Volcar cada producto
+            for prod in products:
+                nombre = prod.get("nombre", "").strip()
+                codigo = re.sub(r"\D", "", str(prod.get("codigo", "")))
+                precio = re.sub(r"\D", "", str(prod.get("precio", "")))
+                # if not (nombre and codigo and precio):
+                #     print(f"⚠️ Campos faltantes en {img_file.name}, omitiendo entrada.")
+                #     continue
+                ws.append([nombre, codigo, precio, page, img_file.name])
+
+            print(f"✅ Procesados {len(products)} productos en {img_file.name}")
+        except Exception as e:
+            print(f"⚠️ Error procesando {img_file.name}: {e}")
 
     # Guarda el Excel
     wb.save(EXCEL_PATH)

@@ -14,8 +14,8 @@ from src.train_LLM import train_llm
 def main():
     while True:
         print("\n--- Menú Pipeline Catálogos ---")
-        print("1) Procesar con GPT-4o Vision")
-        print("2) Entrenar GPT-4o Vision")
+        print("1) Procesar")
+        print("2) Entrenar")
         print("3) Salir")
         choice = input("Selecciona [1-3]: ")
         if choice == "1":
@@ -27,23 +27,26 @@ def main():
                 print("2) Todos los catálogos")
                 print("3) Estilos")
                 print("4) Estilos Ofertas")
-                print("5) OriflameCuerpo")
-                print("6) OriflameCutis")
-                print("7) OriflameFragancias")
-                print("8) OriflameColor")
+                print("5) Oriflame Cuerpo")
+                print("6) Oriflame Cutis")
+                print("7) Oriflame Fragancias")
+                print("8) Oriflame Color")
+                print("9) Estilos Bronx")
+                print("\n")
                 choice2 = input("Selecciona: ")
                 if choice2 == "2":
                     process_catalog_llm("input_imagenes/Estilos", "estilos")
-                    process_catalog_llm("input_imagenes/Estilos_Ofertas", "estilos_ofertas")
+                    process_catalog_llm("input_imagenes/EstilosOfertas", "estilos_ofertas")
                     process_catalog_llm("input_imagenes/OriflameCuerpo", "oriflame_cuerpo")
                     process_catalog_llm("input_imagenes/OriflameCutis", "oriflame_cutis")
                     process_catalog_llm("input_imagenes/OriflameFragancias", "oriflame_fragancias")
                     process_catalog_llm("input_imagenes/OriflameColor", "oriflame_color")
+                    process_catalog_llm("input_imagenes/EstilosBronx", "estilos_bronx")
 
                 elif choice2 == "3":
                     process_catalog_llm("input_imagenes/Estilos", "estilos")
                 elif choice2 == "4":
-                    process_catalog_llm("input_imagenes/Estilos_Ofertas", "estilos_ofertas")
+                    process_catalog_llm("input_imagenes/EstilosOfertas", "estilos_ofertas")
                 elif choice2 == "5":
                     process_catalog_llm("input_imagenes/OriflameCuerpo", "oriflame_cuerpo")
                 elif choice2 == "6":
@@ -52,6 +55,8 @@ def main():
                     process_catalog_llm("input_imagenes/OriflameFragancias", "oriflame_fragancias")
                 elif choice2 == "8":
                     process_catalog_llm("input_imagenes/OriflameColor", "oriflame_color")
+                elif choice2 == "9":
+                    process_catalog_llm("input_imagenes/EstilosBronx", "estilos_bronx")
                 elif choice2 == "1":
                     print("Volviendo...")
                     break
