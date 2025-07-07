@@ -7,6 +7,3 @@
 
 # Variables de entorno
 .env
-
-# Ignorar archivos de texto
-input_imagenes/*.txt
