@@ -43,7 +43,7 @@ def _extract_json(text: str) -> str:
     return ""
 
 
-def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "gpt-4o"):
+def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "gpt-4.1"):
     """
     Procesa todas las imágenes JPG y PNG en image_dir con GPT-4o Vision y genera un Excel.
 

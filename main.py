@@ -9,6 +9,7 @@ Ejecuta desde la raíz:
 import sys
 from src.process_catalog_LLM import process_catalog_llm
 from src.train_LLM import train_llm
+from src.create_catalog import generate_catalog
 
 
 def main():
@@ -16,7 +17,8 @@ def main():
         print("\n--- Menú Pipeline Catálogos ---")
         print("1) Procesar")
         print("2) Entrenar")
-        print("3) Salir")
+        print("3) Crear catálogo")
+        print("4) Salir")
         choice = input("Selecciona [1-3]: ")
         if choice == "1":
             # Importar y ejecutar
@@ -84,7 +86,11 @@ def main():
             #     else:
             #         print("Opción inválida.")
             print("\n--- Entrenamiento no implementado aún ---")
+
         elif choice == "3":
+            generate_catalog("input_imagenes/new_catalog_imgs", "excel/new_catalog_products.xlsx", "pdf/catalogo.pdf")
+
+        elif choice == "4":
             print("Saliendo...")
             sys.exit(0)
         else:
