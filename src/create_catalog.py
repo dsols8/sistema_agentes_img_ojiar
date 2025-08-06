@@ -1,40 +1,31 @@
 """
-create_catalog.py
-------------------
-Genera un catálogo PDF multipágina usando:
-  • Carpeta de imágenes PNG (<Codigo>.png)
-  • Excel/CSV con columnas: Nombre, Codigo, Precio
+create_catalog.py + GPT‑4 visión
+--------------------------------
+Genera un catálogo PDF **y**, antes de colocar cada imagen en el PDF, envía la
+imagen a la API de OpenAI (GPT‑4 visión) para obtener una descripción que se
+muestra por consola.
 
-Tipografías (sin cambios):
-  League Spartan Bold – nombre  
-  Bebas Neue Regular – código y dígitos  
-  Montserrat Regular – símbolo ₡
+Requisitos extra:
+* `openai>=1.12.0` (u otra versión 1.x)
+* Variable de entorno `OPENAI_API_KEY` con tu key.
 
-**Nuevo layout**
-===============
-• La **imagen ahora se coloca arriba** y ocupa mayor altura.  
-• El bloque de texto (nombre‑código‑precio) queda DEBAJO de la imagen,
-  dentro de un cuadro cuyo desplazamiento controlas con:
-
-```python
-TEXT_OFFSET_X = 0   # +→ derecha | −→ izquierda
-TEXT_OFFSET_Y = 0   # +→ arriba  | −→ abajo (respecto al borde inferior de la imagen)
+Cómo usar:
+```bash
+python create_catalog.py ./imgs catalog.xlsx -o catalog.pdf \
+  --openai-model gpt-4o-vision-preview
 ```
-
-Puedes seguir ajustando `LINE_SPACING` para la distancia vertical entre
-líneas dentro del bloque.
-
-Dependencias: `pandas`, `openpyxl`, `reportlab`
+Si omites `--openai-model`, usa por defecto `gpt-4.1`.
 """
 
 # ============================================================
 # IMPORTS
-# ------------------------------------------------------------
-# Agrupamos todos los imports estándar y de terceros al inicio
-# para que resulte claro qué dependencias necesita el script.
 # ============================================================
 from pathlib import Path
 import argparse
+import base64
+import os
+import sys
+import time
 
 import pandas as pd
 from reportlab.lib.pagesizes import letter
@@ -44,15 +35,14 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+import openai  # pip install openai>=1.12.0
+
 # ============================================================
 # RUTAS Y FUENTES
-# ------------------------------------------------------------
-# Se establece la estructura de carpetas y se registran las
-# tipografías TrueType. Si alguna falta, se usa Helvetica.
 # ============================================================
-SRC_DIR = Path(__file__).resolve().parent  # Carpeta donde vive este script
-PROJECT_ROOT = SRC_DIR.parent             # Carpeta raíz del proyecto
-FONTS_DIR = SRC_DIR / "fonts"            # Carpeta que contiene .ttf
+SRC_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SRC_DIR.parent
+FONTS_DIR = SRC_DIR / "fonts"
 
 FONTS = {
     "LeagueSpartan-Bold":     FONTS_DIR / "LeagueSpartan-Bold.ttf",
@@ -60,85 +50,123 @@ FONTS = {
     "BebasNeue":              FONTS_DIR / "BebasNeue-Regular.ttf",
     "Montserrat-Bold":        FONTS_DIR / "Montserrat-Bold.ttf",
 }
-
-# Registro de fuentes (o fallback a Helvetica si no se encuentra)
 for name, fpath in FONTS.items():
     if fpath.exists():
         pdfmetrics.registerFont(TTFont(name, str(fpath)))
     else:
         print(f"⚠️  Falta {fpath.name} → se usará Helvetica.")
 
-# Alias de fuente que usaremos más adelante
 FN_NAME   = "LeagueSpartan-Bold"    if "LeagueSpartan-Bold"    in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_DIGITS = "BebasNeue"             if "BebasNeue"             in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_SYMBOL = "Montserrat-Bold"       if "Montserrat-Bold"       in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_CODE   = "LeagueSpartan-Regular" if "LeagueSpartan-Regular" in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 
 # ============================================================
-# PARÁMETROS DE LAYOUT
-# ------------------------------------------------------------
-# Variables globales que controlan la estética y posición del
-# bloque de texto. Modifícalas para ajustar la salida.
+# LAYOUT
 # ============================================================
-LINE_SPACING  = 25  # pt entre líneas dentro del bloque de texto
-TEXT_OFFSET_X = 0   # desplaza todo el bloque de texto en X
-TEXT_OFFSET_Y = 0   # desplaza todo el bloque de texto en Y (+ arriba, - abajo)
+LINE_SPACING  = 25
+TEXT_OFFSET_X = 0
+TEXT_OFFSET_Y = 0
 
 # ============================================================
 # HELPERS
-# ------------------------------------------------------------
-# Funciones auxiliares sin efectos laterales.
 # ============================================================
 
 def _abs(path_like: str | Path) -> Path:
-    """Convierte rutas relativas al directorio del proyecto en absolutas."""
     p = Path(path_like)
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
 def _split_price(raw: str):
-    """Separa el símbolo ₡ de la parte numérica y formatea los miles."""
     digits_only = ''.join(ch for ch in raw if ch.isdigit())
     if not digits_only:
-        # Si no hay dígitos, devolvemos el texto original
         return '₡', raw
     integer = int(digits_only)
-    # Formatea: 10000 → '10 000'
     num = ' '.join(f"{integer:,}".split(','))
     return '₡', num
 
+
+def describe_image_with_openai(img_path: Path, model: str) -> str:
+    """Genera un *prompt* óptimo para DALL·E que cree un **fondo de página tamaño carta**
+    acorde al tipo de producto detectado en la imagen.
+
+    Ejemplo de respuesta esperada por GPT‑4:
+    ```
+    "Fondo minimalista en tonos pastel verdes con textura suave, líneas curvas sutiles
+    que evoquen movimiento. Espacio central claro para un par de tenis deportivos blancos
+    con detalles rojos. Luz difusa, sombras suaves. Formato vertical carta."
+    ```
+    """
+    # 1) Codifica la imagen a Base‑64
+    img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+    data_url = f"data:image/png;base64,{img_b64}"
+
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    # 2) Mensajes → solicitamos a GPT‑4 que escriba SOLO el prompt, sin cabeceras extra
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Eres un experto en diseño gráfico. A partir de la imagen proporcionada, "
+                "genera un prompt conciso y muy descriptivo que DALL·E pueda usar para "
+                "crear un *fondo vertical tamaño carta (8.5×11 pulgadas)*. "
+                "El fondo debe resaltar el objeto principal, ser estético y coherente con "
+                "su categoría (ej.: deportivo, electrónico, cocina, moda). "
+                "Evita mencionar marcas ni logotipos y no incluyas la palabra 'prompt' ni "
+                "explicaciones extra: responde solo con la descripción en una línea."
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": (
+                    "Analiza el producto y devuelve la mejor descripción de fondo posible "
+                    "para que DALL·E lo genere."
+                )},
+            ],
+        },
+    ]
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.0,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"⚠️  Error llamando a OpenAI: {e}")
+        return "[Error al generar prompt]"
+    except Exception as e:
+        print(f"⚠️  Error llamando a OpenAI: {e}")
+        return "[Error al obtener descripción]"
+
 # ============================================================
-# CORE (lógica principal)
-# ------------------------------------------------------------
-# generate_catalog() recorre el Excel/CSV y crea el PDF.
+# CORE
 # ============================================================
 
-def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf: str | Path = 'catalog.pdf'):
-    # --- Normaliza rutas a absolutas ---
+def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf: str | Path = 'catalog.pdf', *, openai_model: str = 'gpt-4.1'):
     images_dir = _abs(images_dir)
     excel_path = _abs(excel_path)
     output_pdf = _abs(output_pdf)
 
-    # --- Validaciones de existencia ---
     if not images_dir.is_dir():
         raise FileNotFoundError(f"No images dir: {images_dir}")
     if not excel_path.exists():
         raise FileNotFoundError(f"No data file: {excel_path}")
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
-    # --- Carga de datos ---
     df = pd.read_excel(excel_path, engine='openpyxl') if excel_path.suffix.lower() in {'.xls', '.xlsx', '.xlsm'} else pd.read_csv(excel_path)
     if not {"Nombre", "Codigo", "Precio"}.issubset(df.columns):
         raise ValueError('Excel requiere columnas Nombre, Codigo, Precio')
 
-    # --- Configuración de página ---
     page_w, page_h = letter
-    margin = 0.5 * inch  # margen externo
+    margin = 0.5 * inch
 
-    # --- Inicia lienzo PDF ---
     c = canvas.Canvas(str(output_pdf), pagesize=letter)
 
-    # --- Itera productos ---
     for _, row in df.iterrows():
         nombre = str(row['Nombre']).strip()
         codigo = str(row['Codigo']).strip()
@@ -148,11 +176,15 @@ def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf:
         if not img_path.exists():
             raise FileNotFoundError(f"Missing image {img_path}")
 
-        # ----------------------------------------------------
-        # IMAGEN (se coloca arriba y se escala)
-        # ----------------------------------------------------
-        text_block_height = LINE_SPACING * 2 + 26  # altura aprox de texto
-        max_img_h = page_h - 2 * margin - text_block_height - 12  # 12 pt de separación
+        # --- Llamada a GPT‑4 visión para descripción ---
+        descripcion = describe_image_with_openai(img_path, openai_model)
+        print(f"\n{codigo} → {descripcion}")
+
+        # ------------------------------------------------
+        # IMAGEN (arriba, escalada)
+        # ------------------------------------------------
+        text_block_height = LINE_SPACING * 2 + 26
+        max_img_h = page_h - 2 * margin - text_block_height - 12
         max_img_w = page_w - 2 * margin
 
         img = ImageReader(str(img_path))
@@ -163,46 +195,44 @@ def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf:
         img_y = page_h - margin - dh
         c.drawImage(img, img_x, img_y, dw, dh, preserveAspectRatio=True, mask='auto')
 
-        # ----------------------------------------------------
-        # BLOQUE DE TEXTO (debajo de la imagen)
-        # ----------------------------------------------------
+        # ------------------------------------------------
+        # BLOQUE DE TEXTO
+        # ------------------------------------------------
         base_x = margin + TEXT_OFFSET_X
-        base_y = img_y - 12 - TEXT_OFFSET_Y  # padding debajo de la imagen
+        base_y = img_y - 12 - TEXT_OFFSET_Y
 
-        # Nombre del producto
         c.setFont(FN_NAME, 26)
         c.drawString(base_x, base_y, nombre)
 
-        # Código
         c.setFont(FN_CODE, 15)
-        c.drawString(base_x, base_y - LINE_SPACING, 'cod '+codigo)
+        c.drawString(base_x, base_y - LINE_SPACING, f'cod {codigo}')
 
-        # Precio formateado
         sym, digits = _split_price(precio_raw)
         price_y = base_y - 2 * LINE_SPACING
         c.setFont(FN_SYMBOL, 15)
-        sym_w = pdfmetrics.stringWidth(sym, FN_SYMBOL, 20)  # ancho del símbolo (20 pt)
+        sym_w = pdfmetrics.stringWidth(sym, FN_SYMBOL, 20)
         c.drawString(base_x, price_y, sym)
         c.setFont(FN_DIGITS, 20)
         c.drawString(base_x + sym_w + 2, price_y, digits)
 
-        # Salta a la siguiente página
         c.showPage()
 
-    # --- Guarda el PDF ---
     c.save()
     print(f'✅ PDF generado: {output_pdf}')
 
 # ============================================================
-# CLI (punto de entrada cuando se ejecuta por terminal)
-# ------------------------------------------------------------
-# Se definen los argumentos esperados y se llama a generate_catalog().
+# CLI
 # ============================================================
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='Genera un catálogo con imagen grande y texto debajo.')
+    ap = argparse.ArgumentParser(description='Genera un catálogo y describe cada imagen con GPT‑4 Visión.')
     ap.add_argument('images_dir', help='Carpeta con las imágenes PNG')
     ap.add_argument('excel_path', help='Archivo Excel/CSV con los datos de productos')
     ap.add_argument('-o', '--output', default='catalog.pdf', help='Ruta del PDF de salida')
+    ap.add_argument('--openai-model', default='gpt-4.1', help='ID del modelo OpenAI (ej. gpt-4o-vision-preview)')
     args = ap.parse_args()
 
-    generate_catalog(args.images_dir, args.excel_path, args.output)
+    # Verifica la API key
+    if not os.getenv('OPENAI_API_KEY'):
+        sys.exit('❌ Falta la variable de entorno OPENAI_API_KEY')
+
+    generate_catalog(args.images_dir, args.excel_path, args.output, openai_model=args.openai_model)
