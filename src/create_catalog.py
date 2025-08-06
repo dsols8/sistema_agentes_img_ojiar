@@ -47,6 +47,7 @@ FONTS_DIR = SRC_DIR / "fonts"
 
 FONTS = {
     "LeagueSpartan-Bold": FONTS_DIR / "LeagueSpartan-Bold.ttf",
+    "LeagueSpartan-Regular": FONTS_DIR / "LeagueSpartan-Regular.ttf",
     "BebasNeue":          FONTS_DIR / "BebasNeue-Regular.ttf",
     "Montserrat-Bold": FONTS_DIR / "Montserrat-Bold.ttf",
 }
@@ -59,7 +60,7 @@ for name, fpath in FONTS.items():
 FN_NAME   = "LeagueSpartan-Bold" if "LeagueSpartan-Bold" in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_DIGITS = "BebasNeue"          if "BebasNeue"          in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_SYMBOL = "Montserrat-Bold" if "Montserrat-Bold" in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
-FN_CODE   = FN_DIGITS
+FN_CODE   = "LeagueSpartan-Regular" if "LeagueSpartan-Regular" in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 
 # ------------------------------------------------------------
 # Layout parameters
@@ -137,8 +138,8 @@ def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf:
         c.setFont(FN_NAME, 26)
         c.drawString(base_x, base_y, nombre)
 
-        c.setFont(FN_CODE, 18)
-        c.drawString(base_x, base_y - LINE_SPACING, codigo)
+        c.setFont(FN_CODE, 15)
+        c.drawString(base_x, base_y - LINE_SPACING, 'cod '+codigo)
 
         sym, digits = _split_price(precio_raw)
         price_y = base_y - 2 * LINE_SPACING
