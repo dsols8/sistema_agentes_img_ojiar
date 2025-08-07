@@ -83,17 +83,21 @@ def process_catalog_llm(image_dir: str | Path, catalog_name: str, model: str = "
         messages = [
             {"role": "system", "content": (
                 "Eres un asistente multimodal experto en catálogos. "
-                "Devuélveme únicamente un JSON array con objetos {\"nombre\",\"codigo\",\"precio\"}, sin texto adicional."
-                "Si el producto tiene variantes agrega la variante al nombre, "
-                "por ejemplo: \"Nombre Producto - Variante\". "
+                "Devuélveme únicamente un JSON array con objetos {\"nombre\",\"codigo\",\"precio\"}, sin texto adicional. "
+                "El nombre correcto del producto SIEMPRE es el que aparece en la descripción de la página, NO el que está grande en el empaque ni el logo. "
+                "Ejemplo: Si en la página aparece un empaque que dice 'Fix & Matt', pero en la descripción se lee 'Polvo suelto fijador y matificador', el nombre debe ser 'Polvo suelto fijador y matificador'. "
+                "Si el producto tiene variantes (como tonos), agrega la variante al nombre (por ejemplo: 'Polvo suelto fijador y matificador - Light'). "
+                "El código y el nombre de la variante suelen estar cerca uno del otro, pero el nombre comercial SIEMPRE sale del texto de la descripción. "
+                "El precio se toma de la misma descripción."
             )},
             {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/{img_file.suffix[1:]};base64,{img_b64}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/{img_file.suffix[1:]};base64,{img_b64}" }},
                 {"type": "text", "text": (
                     "Extrae todos los productos de esta página. Responde solo con el JSON array."
                 )}
             ]}
         ]
+
 
         try:
             # Llamada GPT-4o Vision
