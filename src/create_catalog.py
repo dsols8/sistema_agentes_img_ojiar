@@ -1,133 +1,131 @@
-"""
-create_catalog.py + GPT‑4 visión
---------------------------------
-Genera un catálogo PDF **y**, antes de colocar cada imagen en el PDF, envía la
-imagen a la API de OpenAI (GPT‑4 visión) para obtener una descripción que se
-muestra por consola.
+#!/usr/bin/env python
+"""create_catalog.py – Catálogo vertical con GPT‑4o visión + DALL·E 3
+=============================================================================
+Genera un PDF tamaño **carta vertical** (8.5 × 11 in) donde cada página contiene:
 
-Requisitos extra:
-* `openai>=1.12.0` (u otra versión 1.x)
-* Variable de entorno `OPENAI_API_KEY` con tu key.
+1. **Fondo** creado por DALL·E 3 usando un prompt generado por GPT‑4o visión.
+2. **Foto del producto** centrada en la parte superior.
+3. **Bloque de texto** (nombre, código y precio) anclado SIEMPRE al margen
+   inferior, respetando la zona reservada (~20 % inferior) que el prompt exige.
 
-Cómo usar:
+Uso rápido
+----------
 ```bash
-python create_catalog.py ./imgs catalog.xlsx -o catalog.pdf \
-  --openai-model gpt-4o-vision-preview
+python create_catalog.py imgs/ products.xlsx -o catalog.pdf \
+       --openai-model gpt-4o --dalle-model dall-e-3
 ```
-Si omites `--openai-model`, usa por defecto `gpt-4.1`.
+
+Requisitos
+----------
+```bash
+pip install openai>=1.12.0 pandas reportlab pillow requests
+export OPENAI_API_KEY=sk-...
+```
 """
 
-# ============================================================
+# ---------------------------------------------------------------------------
 # IMPORTS
-# ============================================================
-from pathlib import Path
+# ---------------------------------------------------------------------------
+from __future__ import annotations
+
 import argparse
 import base64
+import io
 import os
-import sys
-import time
+from pathlib import Path
+from typing import Tuple
 
+import openai  # SDK oficial 1.x
 import pandas as pd
+import requests
+from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen.canvas import Canvas
 
-import openai  # pip install openai>=1.12.0
-
-# ============================================================
+# ---------------------------------------------------------------------------
 # RUTAS Y FUENTES
-# ============================================================
+# ---------------------------------------------------------------------------
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
 FONTS_DIR = SRC_DIR / "fonts"
 
-FONTS = {
+FONTS: dict[str, Path] = {
     "LeagueSpartan-Bold":     FONTS_DIR / "LeagueSpartan-Bold.ttf",
     "LeagueSpartan-Regular":  FONTS_DIR / "LeagueSpartan-Regular.ttf",
     "BebasNeue":              FONTS_DIR / "BebasNeue-Regular.ttf",
     "Montserrat-Bold":        FONTS_DIR / "Montserrat-Bold.ttf",
 }
-for name, fpath in FONTS.items():
-    if fpath.exists():
-        pdfmetrics.registerFont(TTFont(name, str(fpath)))
+for name, path in FONTS.items():
+    if path.exists():
+        pdfmetrics.registerFont(TTFont(name, str(path)))
     else:
-        print(f"⚠️  Falta {fpath.name} → se usará Helvetica.")
+        print(f"⚠️  Fuente faltante {path.name} – se usará Helvetica.")
 
 FN_NAME   = "LeagueSpartan-Bold"    if "LeagueSpartan-Bold"    in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_DIGITS = "BebasNeue"             if "BebasNeue"             in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_SYMBOL = "Montserrat-Bold"       if "Montserrat-Bold"       in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 FN_CODE   = "LeagueSpartan-Regular" if "LeagueSpartan-Regular" in pdfmetrics.getRegisteredFontNames() else "Helvetica-Bold"
 
-# ============================================================
-# LAYOUT
-# ============================================================
-LINE_SPACING  = 25
-TEXT_OFFSET_X = 0
-TEXT_OFFSET_Y = 0
+# ---------------------------------------------------------------------------
+# CONSTANTES DE DISEÑO
+# ---------------------------------------------------------------------------
+LINE_SPACING = 25           # pt entre líneas del bloque inferior
+TEXT_BLOCK_H = LINE_SPACING * 2 + 26  # Altura total (Nombre + Código + Precio)
 
-# ============================================================
-# HELPERS
-# ============================================================
+# ---------------------------------------------------------------------------
+# UTILIDADES
+# ---------------------------------------------------------------------------
 
 def _abs(path_like: str | Path) -> Path:
     p = Path(path_like)
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
-def _split_price(raw: str):
-    digits_only = ''.join(ch for ch in raw if ch.isdigit())
-    if not digits_only:
+def _split_price(raw: str) -> Tuple[str, str]:
+    digits = ''.join(ch for ch in raw if ch.isdigit())
+    if not digits:
         return '₡', raw
-    integer = int(digits_only)
-    num = ' '.join(f"{integer:,}".split(','))
-    return '₡', num
+    num = int(digits)
+    formatted = ' '.join(f"{num:,}".split(','))
+    return '₡', formatted
 
+# ---------------------------------------------------------------------------
+# GPT‑4o VISIÓN → PROMPT DALL·E
+# ---------------------------------------------------------------------------
 
 def describe_image_with_openai(img_path: Path, model: str) -> str:
-    """Genera un *prompt* óptimo para DALL·E que cree un **fondo de página tamaño carta**
-    acorde al tipo de producto detectado en la imagen.
-
-    Ejemplo de respuesta esperada por GPT‑4:
-    ```
-    "Fondo minimalista en tonos pastel verdes con textura suave, líneas curvas sutiles
-    que evoquen movimiento. Espacio central claro para un par de tenis deportivos blancos
-    con detalles rojos. Luz difusa, sombras suaves. Formato vertical carta."
-    ```
-    """
-    # 1) Codifica la imagen a Base‑64
-    img_b64 = base64.b64encode(img_path.read_bytes()).decode()
-    data_url = f"data:image/png;base64,{img_b64}"
+    """Devuelve un prompt (UNA línea) para DALL·E 3 a partir de la foto."""
+    data_url = f"data:image/png;base64,{base64.b64encode(img_path.read_bytes()).decode()}"
 
     client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # 2) Mensajes → solicitamos a GPT‑4 que escriba SOLO el prompt, sin cabeceras extra
+    system_prompt = (
+        "You are an expert in product catalog backgrounds. "
+        "Generate the BEST possible DALL·E 3 prompt to create a vertical, letter-size (8.5x11 in) background that matches the CATEGORY of the attached product image. "
+        "The background must be completely light, in bright neutral or soft pastel tones only, with no dark or high-contrast areas. "
+        "The entire background should be suitable for overlaying black text anywhere. "
+        "The center should be clear, soft and empty, ready for the product photo. "
+        "Capture an environment relevant to the product type, but never describe, mention, or imply the product or any brand. "
+        "No objects, no logos, no text, no visual clutter. "
+        "Make the promt as detailed as possible. "
+        "Return only the prompt, in English, for direct use in DALL·E 3."
+    )
+
+
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Eres un experto en diseño gráfico. A partir de la imagen proporcionada, "
-                "genera un prompt conciso y muy descriptivo que DALL·E pueda usar para "
-                "crear un *fondo vertical tamaño carta (8.5×11 pulgadas)*. "
-                "El fondo debe resaltar el objeto principal, ser estético y coherente con "
-                "su categoría (ej.: deportivo, electrónico, cocina, moda). "
-                "Evita mencionar marcas ni logotipos y no incluyas la palabra 'prompt' ni "
-                "explicaciones extra: responde solo con la descripción en una línea."
-            ),
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": data_url}},
-                {"type": "text", "text": (
-                    "Analiza el producto y devuelve la mejor descripción de fondo posible "
-                    "para que DALL·E lo genere."
-                )},
-            ],
-        },
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": data_url}},
+            {"type": "text", "text": "Return only the prompt for the background."}
+        ]},
     ]
+
+
+
 
     try:
         resp = client.chat.completions.create(
@@ -136,76 +134,93 @@ def describe_image_with_openai(img_path: Path, model: str) -> str:
             temperature=0.0,
         )
         return resp.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"⚠️  Error llamando a OpenAI: {e}")
-        return "[Error al generar prompt]"
-    except Exception as e:
-        print(f"⚠️  Error llamando a OpenAI: {e}")
-        return "[Error al obtener descripción]"
+    except openai.OpenAIError as exc:
+        print(f"⚠️  GPT‑4o rechazó la imagen: {exc}. Se usará prompt neutro.")
+        return "Neutral light-gray studio background, empty, subtle vignette"
 
-# ============================================================
-# CORE
-# ============================================================
+# ---------------------------------------------------------------------------
+# DALL·E 3 → BACKGROUND
+# ---------------------------------------------------------------------------
 
-def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf: str | Path = 'catalog.pdf', *, openai_model: str = 'gpt-4.1'):
-    images_dir = _abs(images_dir)
-    excel_path = _abs(excel_path)
-    output_pdf = _abs(output_pdf)
+def generate_dalle_background(prompt: str, dalle_model: str, size: str = "1024x1792") -> ImageReader:
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    try:
+        res = client.images.generate(model=dalle_model, prompt=prompt, size=size, n=1)
+        url = res.data[0].url
+        img_bytes = requests.get(url, timeout=30).content
+        return ImageReader(io.BytesIO(img_bytes))
+    except Exception as exc:
+        print(f"⚠️  DALL·E error: {exc}. Fondo blanco.")
+        buf = io.BytesIO()
+        Image.new('RGB', (1024, 1792), 'white').save(buf, format='PNG')
+        buf.seek(0)
+        return ImageReader(buf)
+
+# ---------------------------------------------------------------------------
+# GENERADOR PRINCIPAL
+# ---------------------------------------------------------------------------
+
+def generate_catalog(
+    images_dir: str | Path,
+    excel_path: str | Path,
+    output_pdf: str | Path = 'catalog.pdf',
+    *,
+    openai_model: str = 'gpt-4.1',
+    dalle_model: str = 'dall-e-3',
+) -> None:
+    images_dir, excel_path, output_pdf = map(_abs, (images_dir, excel_path, output_pdf))
 
     if not images_dir.is_dir():
-        raise FileNotFoundError(f"No images dir: {images_dir}")
+        raise FileNotFoundError(f"No existe carpeta de imágenes: {images_dir}")
     if not excel_path.exists():
-        raise FileNotFoundError(f"No data file: {excel_path}")
+        raise FileNotFoundError(f"No existe archivo de datos: {excel_path}")
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_excel(excel_path, engine='openpyxl') if excel_path.suffix.lower() in {'.xls', '.xlsx', '.xlsm'} else pd.read_csv(excel_path)
+    # Carga spreadsheet
+    df = (pd.read_excel(excel_path, engine='openpyxl') if excel_path.suffix.lower() in {'.xls', '.xlsx', '.xlsm'}
+          else pd.read_csv(excel_path))
     if not {"Nombre", "Codigo", "Precio"}.issubset(df.columns):
-        raise ValueError('Excel requiere columnas Nombre, Codigo, Precio')
+        raise ValueError("El Excel/CSV debe tener columnas Nombre, Codigo, Precio")
 
     page_w, page_h = letter
     margin = 0.5 * inch
 
-    c = canvas.Canvas(str(output_pdf), pagesize=letter)
+    c: Canvas = Canvas(str(output_pdf), pagesize=letter)
 
     for _, row in df.iterrows():
-        nombre = str(row['Nombre']).strip()
-        codigo = str(row['Codigo']).strip()
-        precio_raw = str(row['Precio']).strip()
-
+        nombre, codigo, precio_raw = map(str, (row['Nombre'], row['Codigo'], row['Precio']))
         img_path = images_dir / f"{codigo}.png"
         if not img_path.exists():
-            raise FileNotFoundError(f"Missing image {img_path}")
+            raise FileNotFoundError(f"Imagen faltante: {img_path}")
 
-        # --- Llamada a GPT‑4 visión para descripción ---
-        descripcion = describe_image_with_openai(img_path, openai_model)
-        print(f"\n{codigo} → {descripcion}")
+        # 1️⃣ GPT‑4o visión → Prompt
+        prompt = describe_image_with_openai(img_path, openai_model)
+        print(f"\n✅ {codigo} → prompt DALL·E:\n{prompt}")
 
-        # ------------------------------------------------
-        # IMAGEN (arriba, escalada)
-        # ------------------------------------------------
-        text_block_height = LINE_SPACING * 2 + 26
-        max_img_h = page_h - 2 * margin - text_block_height - 12
+        # 2️⃣ DALL·E fondo
+        bg = generate_dalle_background(prompt, dalle_model)
+        c.drawImage(bg, 0, 0, width=page_w, height=page_h, preserveAspectRatio=False)
+
+        # 3️⃣ Foto producto (parte superior)
+        max_img_h = page_h - 2 * margin - TEXT_BLOCK_H - 12  # reserva zona texto
         max_img_w = page_w - 2 * margin
-
-        img = ImageReader(str(img_path))
-        iw, ih = img.getSize()
+        prod = ImageReader(str(img_path))
+        iw, ih = prod.getSize()
         scale = min(max_img_w / iw, max_img_h / ih)
         dw, dh = iw * scale, ih * scale
         img_x = (page_w - dw) / 2
         img_y = page_h - margin - dh
-        c.drawImage(img, img_x, img_y, dw, dh, preserveAspectRatio=True, mask='auto')
+        c.drawImage(prod, img_x, img_y, dw, dh, preserveAspectRatio=True, mask='auto')
 
-        # ------------------------------------------------
-        # BLOQUE DE TEXTO
-        # ------------------------------------------------
-        base_x = margin + TEXT_OFFSET_X
-        base_y = img_y - 12 - TEXT_OFFSET_Y
+        # 4️⃣ Bloque inferior SIEMPRE anclado a bottom margin
+        base_x = margin
+        base_y = margin + TEXT_BLOCK_H  # baseline del nombre
 
         c.setFont(FN_NAME, 26)
-        c.drawString(base_x, base_y, nombre)
+        c.drawString(base_x, base_y, nombre.strip())
 
         c.setFont(FN_CODE, 15)
-        c.drawString(base_x, base_y - LINE_SPACING, f'cod {codigo}')
+        c.drawString(base_x, base_y - LINE_SPACING, f"cod {codigo.strip()}")
 
         sym, digits = _split_price(precio_raw)
         price_y = base_y - 2 * LINE_SPACING
@@ -218,21 +233,24 @@ def generate_catalog(images_dir: str | Path, excel_path: str | Path, output_pdf:
         c.showPage()
 
     c.save()
-    print(f'✅ PDF generado: {output_pdf}')
+    print(f"✅ PDF generado: {output_pdf}")
 
-# ============================================================
+# ---------------------------------------------------------------------------
 # CLI
-# ============================================================
+# ---------------------------------------------------------------------------
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='Genera un catálogo y describe cada imagen con GPT‑4 Visión.')
-    ap.add_argument('images_dir', help='Carpeta con las imágenes PNG')
-    ap.add_argument('excel_path', help='Archivo Excel/CSV con los datos de productos')
-    ap.add_argument('-o', '--output', default='catalog.pdf', help='Ruta del PDF de salida')
-    ap.add_argument('--openai-model', default='gpt-4.1', help='ID del modelo OpenAI (ej. gpt-4o-vision-preview)')
+    ap = argparse.ArgumentParser(description="Genera un catálogo PDF usando GPT‑4o visión + DALL·E 3.")
+    ap.add_argument('images_dir', help='Carpeta con imágenes PNG/JPG')
+    ap.add_argument('excel_path', help='Archivo Excel/CSV con Nombre, Codigo, Precio')
+    ap.add_argument('-o', '--output', default='catalog.pdf', help='PDF de salida')
+    ap.add_argument('--openai-model', default='gpt-4o', help='Modelo GPT‑4 visión')
+    ap.add_argument('--dalle-model', default='dall-e-3', help='Modelo DALL·E')
     args = ap.parse_args()
 
-    # Verifica la API key
-    if not os.getenv('OPENAI_API_KEY'):
-        sys.exit('❌ Falta la variable de entorno OPENAI_API_KEY')
-
-    generate_catalog(args.images_dir, args.excel_path, args.output, openai_model=args.openai_model)
+    generate_catalog(
+        args.images_dir,
+        args.excel_path,
+        args.output,
+        openai_model=args.openai_model,
+        dalle_model=args.dalle_model,
+    )
